@@ -18,6 +18,9 @@ def detect_intent(session_client, project_id, session_id, text, language_code='r
     response = session_client.detect_intent(
         request={'session': session, 'query_input': query_input}
     )
+
+    if response.query_result.intent.is_fallback:
+        return None
     return response.query_result.fulfillment_text
 
 
@@ -32,7 +35,7 @@ def send_message(vk_client, user_id, text):
     vk_client.messages.send(
         user_id=user_id,
         message=text,
-        random_id=0
+        random_id=random.randint(1, 1000)
     )
 
 
@@ -59,7 +62,8 @@ def main():
                         LANGUAGE_CODE
                     )
 
-                    send_message(vk_client, event.user_id, response_text)
+                    if response_text:
+                        send_message(vk_client, event.user_id, response_text)
 
                 except Exception as e:
                     error_msg = 'Произошла ошибка при обработке вашего сообщения'
