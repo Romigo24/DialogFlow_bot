@@ -1,10 +1,19 @@
 import os
 import random
+import logging
 from dotenv import load_dotenv
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
 from google.cloud import dialogflow
 
+
+
+logger = logging.getLogger(__file__)
+
+
+def send_error_to_telegram(error_message, tg_token, admin_chat_id):
+    bot = Bot(token=tg_token)
+    bot.send_message(chat_id=admin_chat_id, text=f"❗ Ошибка: {error_message}")
 
 def initialize_dialogflow(project_id):
     return dialogflow.SessionsClient()
@@ -40,38 +49,44 @@ def send_message(vk_client, user_id, text):
 
 
 def main():
+    logging.basicConfig(
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
+
     load_dotenv()
 
-    vk_token = os.getenv('VK_BOT_TOKEN')
-    DIALOGFLOW_PROJECT_ID = os.getenv('DIALOGFLOW_PROJECT_ID')
-    LANGUAGE_CODE = 'ru'
+    vk_group_token = os.environ['VK_BOT_TOKEN']
+    dialogflow_project_id = os.environ['DIALOGFLOW_PROJECT_ID']
+    tg_token = os.environ['TELEGRAM_BOT_TOKEN']
+    admin_chat_id = os.environ['ADMIN_CHAT_ID']
 
     try:
-        dialogflow_client = initialize_dialogflow(DIALOGFLOW_PROJECT_ID)
-        vk_client, longpoll = initialize_vk_bot(vk_token)
-        print('Умный бот запущен и готов к общению...')
+        dialogflow_client = initialize_dialogflow(dialogflow_project_id)
+        vk_client, longpoll = initialize_vk_bot(vk_group_token)
+        logger.info("Бот запущен")
 
         for event in longpoll.listen():
             if event.type == VkEventType.MESSAGE_NEW and event.to_me:
                 try:
                     response_text = detect_intent(
                         dialogflow_client,
-                        DIALOGFLOW_PROJECT_ID,
+                        dialogflow_project_id,
                         str(event.user_id),
                         event.text,
-                        LANGUAGE_CODE
+                        language_code='ru'
                     )
 
                     if response_text:
                         send_message(vk_client, event.user_id, response_text)
 
                 except Exception as e:
-                    error_msg = 'Произошла ошибка при обработке вашего сообщения'
-                    send_message(vk_client, event.user_id, error_msg)
-                    print(f'Ошибка: {str(e)}')
+                    send_message(vk_client, event.user_id, 'Произошла ошибка :(')
+                    logger.error(f'Ошибка: {str(e)}')
 
     except Exception as e:
-        print(f'Критическая ошибка при инициализации бота: {str(e)}')
+        logger.critical(f'Критическая ошибка при инициализации бота: {str(e)}')
+        send_error_to_telegram(f'VK Bot CRASHED: {e}', tg_token, admin_chat_id)
 
 if __name__ == '__main__':
     main()
