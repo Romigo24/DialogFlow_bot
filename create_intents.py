@@ -2,6 +2,7 @@ import json
 import os
 from dotenv import load_dotenv
 from google.cloud import dialogflow
+from google.api_core.exceptions import GoogleAPICallError
 
 
 def create_intent(project_id, display_name, training_phrases_parts, message_texts):
@@ -27,8 +28,7 @@ def create_intent(project_id, display_name, training_phrases_parts, message_text
     response = intents_client.create_intent(
         request={'parent': parent, 'intent': intent}
     )
-
-    print(f'Intent "{display_name}" успешно создан')
+    return response
 
 
 def main():
@@ -39,7 +39,7 @@ def main():
     try:
         with open('training_questions.json', 'r', encoding='utf=8') as f:
             training_data = json.load(f)
-    except Exception as e:
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError) as e:
         print(f'Ошибка при чтении файла: {e}')
         return
     
@@ -57,10 +57,10 @@ def main():
 
         try:
             create_intent(project_id, intent_name, phrases, [answer])
-        except Exception as e:
+            print(f'Intent "{intent_name}" успешно создан')
+        except (GoogleAPICallError, ValueError) as e:
             print(f'Ошибка при создании intent "{intent_name}": {e}')
 
 
 if __name__=='__main__':
     main()
-

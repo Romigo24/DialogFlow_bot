@@ -3,10 +3,12 @@ import logging
 from telegram import Update, Bot
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from google.cloud import dialogflow
+from google.api_core.exceptions import GoogleAPICallError, InvalidArgument
 from dotenv import load_dotenv
 
 
 logger = logging.getLogger(__name__)
+
 
 def send_error_to_telegram(error_message, tg_token, admin_chat_id):
     bot = Bot(token=tg_token)
@@ -18,46 +20,45 @@ def start(update, context):
             'Я умный бот, напиши мне что-нибудь, и я отвечу через DialogFlow!'
             )
 
+
 def get_dialogflow_response(text, session_id, dialogflow_project_id, language_code='ru'):
-    try:
-        session_client = dialogflow.SessionsClient()
-        session = session_client.session_path(dialogflow_project_id, session_id)
+    session_client = dialogflow.SessionsClient()
+    session = session_client.session_path(dialogflow_project_id, session_id)
 
-        text_input = dialogflow.TextInput(text=text, language_code=language_code)
-        query_input = dialogflow.QueryInput(text=text_input)
+    text_input = dialogflow.TextInput(text=text, language_code=language_code)
+    query_input = dialogflow.QueryInput(text=text_input)
 
-        response = session_client.detect_intent(
-            request={"session": session, "query_input": query_input}
-        )
+    response = session_client.detect_intent(
+        request={"session": session, "query_input": query_input}
+    )
 
-        return response.query_result.fulfillment_text
+    return response.query_result.fulfillment_text
 
-    except Exception as e:
-        logger.error(f'DialogFlow error: {e}', exc_info=True)
-        return "Извините, произошла ошибка при обработке запроса."
 
 def handle_message(update, context):
     try:
         user_message = update.message.text
-        user_id = update.message.from_user.id
+        session_id = f'tg-{update.effective_user.id}'
         dialogflow_project_id = context.bot_data['dialogflow_project_id']
 
-        dialogflow_response = get_dialogflow_response(
-            text=user_message,
-            session_id=str(user_id),
-            dialogflow_project_id=dialogflow_project_id
-        )
+        dialogflow_response = get_dialogflow_response(user_message, session_id, dialogflow_project_id)
 
         update.message.reply_text(dialogflow_response)
 
+    except (GoogleAPICallError, InvalidArgument) as e:
+        logger.warning("Ошибка при обращении к DialogFlow: %s", e)
+        update.message.reply_text("Ой, я не могу сейчас ответить. Попробуй позже.")
+        send_error_to_telegram(str(e), context.bot.token, context.bot_data['admin_chat_id'])
     except Exception as e:
-        logger.error(f'Telegram bot error: {e}', exc_info=True)
-        update.message.reply_text("Произошла ошибка при обработке сообщения.")
+        logger.exception("Неизвестная ошибка:")
+        update.message.reply_text("Что-то пошло не так. Напиши позже!")
         send_error_to_telegram(str(e), context.bot.token, context.bot_data['admin_chat_id'])
 
+
 def error_handler(update, context):
-    logger.error(f'Update {update} caused error {context.error}', exc_info=True)
+    logger.exception('Update "%s" caused error "%s"', update, context.error)
     send_error_to_telegram(str(context.error), context.bot.token, context.bot_data['admin_chat_id'])
+
 
 def main():
     logging.basicConfig(
@@ -83,6 +84,7 @@ def main():
     updater.start_polling()
     logger.info("Bot started with DialogFlow integration")
     updater.idle()
+
 
 if __name__ == '__main__':
     main()

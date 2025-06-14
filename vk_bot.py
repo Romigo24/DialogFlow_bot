@@ -2,10 +2,11 @@ import os
 import random
 import logging
 from dotenv import load_dotenv
-import vk_api
+from telegram import Bot
+import vk_api as vk
 from vk_api.longpoll import VkLongPoll, VkEventType
 from google.cloud import dialogflow
-
+from google.api_core.exceptions import GoogleAPICallError, InvalidArgument
 
 
 logger = logging.getLogger(__file__)
@@ -15,11 +16,9 @@ def send_error_to_telegram(error_message, tg_token, admin_chat_id):
     bot = Bot(token=tg_token)
     bot.send_message(chat_id=admin_chat_id, text=f"❗ Ошибка: {error_message}")
 
-def initialize_dialogflow(project_id):
-    return dialogflow.SessionsClient()
 
-
-def detect_intent(session_client, project_id, session_id, text, language_code='ru'):
+def detect_intent(project_id, session_id, text, language_code='ru'):
+    session_client = dialogflow.SessionsClient()
     session = session_client.session_path(project_id, session_id)
     text_input = dialogflow.TextInput(text=text, language_code=language_code)
     query_input = dialogflow.QueryInput(text=text_input)
@@ -28,24 +27,19 @@ def detect_intent(session_client, project_id, session_id, text, language_code='r
         request={'session': session, 'query_input': query_input}
     )
 
-    if response.query_result.intent.is_fallback:
-        return None
-    return response.query_result.fulfillment_text
+    return response.query_result
 
 
-def initialize_vk_bot(vk_token):
-    vk_session = vk_api.VkApi(token=vk_token)
-    vk = vk_session.get_api()
-    longpool = VkLongPoll(vk_session)
-    return vk, longpool
+def handle_dialogflow_answer(event, vk_api, project_id, language_code='ru'):
+    session_id = f'vk-{event.user_id}'
+    query_result = detect_intent(project_id, session_id, event.text, language_code)
 
-
-def send_message(vk_client, user_id, text):
-    vk_client.messages.send(
-        user_id=user_id,
-        message=text,
-        random_id=random.randint(1, 1000)
-    )
+    if not query_result.intent.is_fallback:
+        vk_api.messages.send(
+            user_id=event.user_id,
+            message=query_result.fulfillment_text,
+            random_id=random.randint(1, 100000)
+        )
 
 
 def main():
@@ -61,32 +55,21 @@ def main():
     tg_token = os.environ['TELEGRAM_BOT_TOKEN']
     admin_chat_id = os.environ['ADMIN_CHAT_ID']
 
-    try:
-        dialogflow_client = initialize_dialogflow(dialogflow_project_id)
-        vk_client, longpoll = initialize_vk_bot(vk_group_token)
-        logger.info("Бот запущен")
+    vk_session = vk.VkApi(token=vk_group_token)
+    vk_api = vk_session.get_api()
+    longpoll = VkLongPoll(vk_session)
 
-        for event in longpoll.listen():
-            if event.type == VkEventType.MESSAGE_NEW and event.to_me:
-                try:
-                    response_text = detect_intent(
-                        dialogflow_client,
-                        dialogflow_project_id,
-                        str(event.user_id),
-                        event.text,
-                        language_code='ru'
-                    )
+    for event in longpoll.listen():
+        if event.type == VkEventType.MESSAGE_NEW and event.to_me:
+            try:
+               handle_dialogflow_answer(event, vk_api, dialogflow_project_id)
+            except (GoogleAPICallError, InvalidArgument) as e:
+                logger.warning("Ошибка при обращении к DialogFlow: %s", e)
+                send_error_to_telegram(str(e), tg_token, admin_chat_id)
+            except Exception as e:
+                logger.exception('Ошибка при обработке сообщения')
+                send_error_to_telegram(str(e), tg_token, admin_chat_id)
 
-                    if response_text:
-                        send_message(vk_client, event.user_id, response_text)
-
-                except Exception as e:
-                    send_message(vk_client, event.user_id, 'Произошла ошибка :(')
-                    logger.error(f'Ошибка: {str(e)}')
-
-    except Exception as e:
-        logger.critical(f'Критическая ошибка при инициализации бота: {str(e)}')
-        send_error_to_telegram(f'VK Bot CRASHED: {e}', tg_token, admin_chat_id)
 
 if __name__ == '__main__':
     main()
