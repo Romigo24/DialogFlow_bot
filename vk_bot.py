@@ -1,12 +1,14 @@
 import os
 import random
 import logging
+
 from dotenv import load_dotenv
 from telegram import Bot
 import vk_api as vk
 from vk_api.longpoll import VkLongPoll, VkEventType
-from google.cloud import dialogflow
 from google.api_core.exceptions import GoogleAPICallError, InvalidArgument
+
+from dialogflow_tools import get_dialogflow_response
 
 
 logger = logging.getLogger(__file__)
@@ -17,28 +19,15 @@ def send_error_to_telegram(error_message, tg_token, admin_chat_id):
     bot.send_message(chat_id=admin_chat_id, text=f"❗ Ошибка: {error_message}")
 
 
-def detect_intent(project_id, session_id, text, language_code='ru'):
-    session_client = dialogflow.SessionsClient()
-    session = session_client.session_path(project_id, session_id)
-    text_input = dialogflow.TextInput(text=text, language_code=language_code)
-    query_input = dialogflow.QueryInput(text=text_input)
-
-    response = session_client.detect_intent(
-        request={'session': session, 'query_input': query_input}
-    )
-
-    return response.query_result
-
-
 def handle_dialogflow_answer(event, vk_api, project_id, language_code='ru'):
     session_id = f'vk-{event.user_id}'
-    query_result = detect_intent(project_id, session_id, event.text, language_code)
+    query_result = get_dialogflow_response(project_id, session_id, event.text, language_code)
 
-    if not query_result.intent.is_fallback:
+    if query_result:
         vk_api.messages.send(
             user_id=event.user_id,
-            message=query_result.fulfillment_text,
-            random_id=random.randint(1, 100000)
+            message=query_result,
+            random_id=random.randint(1, 1000)
         )
 
 
